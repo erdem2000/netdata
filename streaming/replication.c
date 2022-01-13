@@ -1,8 +1,10 @@
 //Includes
 #include "rrdpush.h"
+#include "collectors/plugins.d/pluginsd_parser.h"
 
-static void replication_receiver_thread_cleanup(RRDHOST *host);
+static void replication_receiver_thread_cleanup(void *ptr);
 static void replication_sender_thread_cleanup_callback(void *ptr);
+//extern struct config stream_config;
 
 // Thread Initialization
 static void replication_state_init(REPLICATION_STATE *state){
@@ -54,7 +56,7 @@ void replication_receiver_init(struct receiver_state *receiver, struct config *s
 }
 
 // Thread creation
-void rrdpush_replication_sender_thread(void *ptr) {
+void *rrdpush_replication_sender_thread(void *ptr) {
     struct sender_state *s = (struct sender_state *) ptr;
     // can read the config.
     // Add here the sender thread logic
@@ -85,7 +87,7 @@ void replication_sender_thread_spawn(RRDHOST *host) {
     netdata_mutex_unlock(&host->sender->replication->mutex);
 }
 
-void rrdpush_replication_receiver_thread(void *ptr){
+void *rrdpush_replication_receiver_thread(void *ptr){
     netdata_thread_cleanup_push(replication_receiver_thread_cleanup, ptr);
     struct receiver_state *rpt = (struct receiver_state *)ptr;
     // Add here the receiver thread logic
@@ -140,10 +142,11 @@ static void replication_sender_thread_cleanup_callback(void *ptr) {
     netdata_mutex_unlock(&host->sender->replication->mutex);
 }
 
-void replication_receiver_thread_cleanup(RRDHOST *host)
+static void replication_receiver_thread_cleanup(void *ptr)
 {
     // follow the receiver clean-up
     // destroy the replication rx structs
+    RRDHOST *host = ptr;
 }
 
 // Any join, start, stop, wait, etc thread function goes here.
@@ -187,11 +190,109 @@ void update_memory_index(){
     //other memory modes?
 }
 
+/* The receiver socket is blocking, perform a single read into a buffer so that we can reassemble lines for parsing.
+ */
+static int receiver_read(struct receiver_state *r, FILE *fp) {
+#ifdef ENABLE_HTTPS
+    if (r->ssl.conn && !r->ssl.flags) {
+        ERR_clear_error();
+        int desired = sizeof(r->read_buffer) - r->read_len - 1;
+        int ret = SSL_read(r->ssl.conn, r->read_buffer + r->read_len, desired);
+        if (ret > 0 ) {
+            r->read_len += ret;
+            return 0;
+        }
+        // Don't treat SSL_ERROR_WANT_READ or SSL_ERROR_WANT_WRITE differently on blocking socket
+        u_long err;
+        char buf[256];
+        while ((err = ERR_get_error()) != 0) {
+            ERR_error_string_n(err, buf, sizeof(buf));
+            error("STREAM %s [receive from %s] ssl error: %s", r->hostname, r->client_ip, buf);
+        }
+        return 1;
+    }
+#endif
+    if (!fgets(r->read_buffer, sizeof(r->read_buffer), fp))
+        return 1;
+    r->read_len = strlen(r->read_buffer);
+    return 0;
+}
+
+/* Produce a full line if one exists, statefully return where we start next time.
+ * When we hit the end of the buffer with a partial line move it to the beginning for the next fill.
+ */
+static char *receiver_next_line(struct receiver_state *r, int *pos) {
+    int start = *pos, scan = *pos;
+    if (scan >= r->read_len) {
+        r->read_len = 0;
+        return NULL;
+    }
+    while (scan < r->read_len && r->read_buffer[scan] != '\n')
+        scan++;
+    if (scan < r->read_len && r->read_buffer[scan] == '\n') {
+        *pos = scan+1;
+        r->read_buffer[scan] = 0;
+        return &r->read_buffer[start];
+    }
+    memmove(r->read_buffer, &r->read_buffer[start], r->read_len - start);
+    r->read_len -= start;
+    return NULL;
+}
+
 // Replication parser & commands
 size_t replication_parser(struct receiver_state *rpt, struct plugind *cd, FILE *fp) {
     // create or reuse the parser without interference between streaming and replication
     // support REP on/off/pause/ack
     // GAP
+    size_t result;
+    PARSER_USER_OBJECT *user = callocz(1, sizeof(*user));
+    user->enabled = cd->enabled;
+    user->host = rpt->host;
+    user->opaque = rpt;
+    user->cd = cd;
+    user->trust_durations = 0;
+
+    PARSER *parser = parser_init(rpt->host, user, fp, PARSER_INPUT_SPLIT);
+
+    if (unlikely(!parser)) {
+        error("Failed to initialize parser");
+        cd->serial_failures++;
+        freez(user);
+        return 0;
+    }
+
+    parser->plugins_action->begin_action     = &pluginsd_begin_action;
+    parser->plugins_action->flush_action     = &pluginsd_flush_action;
+    parser->plugins_action->end_action       = &pluginsd_end_action;
+    parser->plugins_action->disable_action   = &pluginsd_disable_action;
+    parser->plugins_action->variable_action  = &pluginsd_variable_action;
+    parser->plugins_action->dimension_action = &pluginsd_dimension_action;
+    parser->plugins_action->label_action     = &pluginsd_label_action;
+    parser->plugins_action->overwrite_action = &pluginsd_overwrite_action;
+    parser->plugins_action->chart_action     = &pluginsd_chart_action;
+    parser->plugins_action->set_action       = &pluginsd_set_action;
+    parser->plugins_action->clabel_commit_action  = &pluginsd_clabel_commit_action;
+    parser->plugins_action->clabel_action    = &pluginsd_clabel_action;
+
+    user->parser = parser;
+
+    do {
+        if (receiver_read(rpt, fp))
+            break;
+        int pos = 0;
+        char *line;
+        while ((line = receiver_next_line(rpt, &pos))) {
+            if (unlikely(netdata_exit || rpt->shutdown || parser_action(parser,  line)))
+                goto done;
+        }
+        rpt->last_msg_t = now_realtime_sec();
+    }
+    while(!netdata_exit);
+done:
+    result= user->count;
+    freez(user);
+    parser_destroy(parser);
+    return result;
 }
 
 // gap processing
