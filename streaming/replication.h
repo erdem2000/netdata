@@ -38,6 +38,7 @@ typedef struct replication_state {
     size_t begin;
     size_t not_connected_loops;
     size_t sent_bytes_on_this_connection;
+    size_t sent_bytes;
     time_t last_sent_t;
     usec_t reconnect_delay;
     // buffer variables

@@ -357,18 +357,18 @@ void attempt_to_rsend(struct sender_state *s) {
     rrdpush_send_labels(s->host);
 
 #ifdef NETDATA_INTERNAL_CHECKS
-    struct circular_buffer *cb = s->buffer;
+    struct circular_buffer *cb = s->replication->buffer;
 #endif
 
     netdata_thread_disable_cancelability();
     netdata_mutex_lock(&s->replication->mutex);
     char *chunk;
-    size_t outstanding = cbuffer_next_unsafe(s->buffer, &chunk);
+    size_t outstanding = cbuffer_next_unsafe(s->replication->buffer, &chunk);
     debug(D_STREAM, "REPLICATION: Sending data. Buffer r=%zu w=%zu s=%zu, next chunk=%zu", cb->read, cb->write, cb->size, outstanding);
     ssize_t ret;
 #ifdef ENABLE_HTTPS
-    SSL *conn = s->host->ssl.conn ;
-    if(conn && !s->host->ssl.flags) {
+    SSL *conn = s->replication->ssl.conn ;
+    if(conn && !s->replication->ssl.flags) {
         ret = SSL_write(conn, chunk, outstanding);
     } else {
         ret = send(s->replication->socket, chunk, outstanding, MSG_DONTWAIT);
@@ -377,15 +377,62 @@ void attempt_to_rsend(struct sender_state *s) {
     ret = send(s->replication->socket, chunk, outstanding, MSG_DONTWAIT);
 #endif
     if (likely(ret > 0)) {
-        cbuffer_remove_unsafe(s->buffer, ret);
-        s->sent_bytes_on_this_connection += ret;
-        s->sent_bytes += ret;
-        debug(D_STREAM, "REPLICATION %s [send to %s]: Sent %zd bytes", s->host->hostname, s->connected_to, ret);
-        s->last_sent_t = now_monotonic_sec();
+        cbuffer_remove_unsafe(s->replication->buffer, ret);
+        s->replication->sent_bytes_on_this_connection += ret;
+        s->replication->sent_bytes += ret;
+        debug(D_STREAM, "REPLICATION %s [send to %s]: Sent %zd bytes", s->host->hostname, s->replication->connected_to, ret);
+        s->replication->last_sent_t = now_monotonic_sec();
     }
     else if (ret == -1 && (errno == EAGAIN || errno == EINTR || errno == EWOULDBLOCK))
         debug(D_STREAM, "REPLICATION %s [send to %s]: unavailable after polling POLLOUT", s->host->hostname,
-              s->connected_to);
+              s->replication->connected_to);
+    else if (ret == -1) {
+        debug(D_STREAM, "REPLICATION: Send failed - closing socket...");
+        error("REPLICATION %s [send to %s]: failed to send metrics - closing connection - we have sent %zu bytes on this connection.",  s->host->hostname, s->connected_to, s->sent_bytes_on_this_connection);
+        replication_sender_thread_close_socket(s->host);
+    }
+    else {
+        debug(D_STREAM, "REPLICATION: send() returned 0 -> no error but no transmission");
+    }
+
+    netdata_mutex_unlock(&s->replication->mutex);
+    netdata_thread_enable_cancelability();
+}
+
+void attempt_to_rsend_repon(struct sender_state *s) {
+
+    rrdpush_send_labels(s->host);
+
+#ifdef NETDATA_INTERNAL_CHECKS
+    struct circular_buffer *cb = s->replication->buffer;
+#endif
+
+    netdata_thread_disable_cancelability();
+    netdata_mutex_lock(&s->replication->mutex);
+    char *chunk;
+    size_t outstanding = cbuffer_next_unsafe(s->replication->buffer, &chunk);
+    debug(D_STREAM, "REPLICATION: Sending data. Buffer r=%zu w=%zu s=%zu, next chunk=%zu", cb->read, cb->write, cb->size, outstanding);
+    ssize_t ret;
+#ifdef ENABLE_HTTPS
+    SSL *conn = s->replication->ssl.conn ;
+    if(conn && !s->replication->ssl.flags) {
+        ret = SSL_write(conn, chunk, outstanding);
+    } else {
+        ret = send(s->replication->socket, chunk, outstanding, MSG_DONTWAIT);
+    }
+#else
+    ret = send(s->replication->socket, chunk, outstanding, MSG_DONTWAIT);
+#endif
+    if (likely(ret > 0)) {
+        cbuffer_remove_unsafe(s->replication->buffer, ret);
+        s->replication->sent_bytes_on_this_connection += ret;
+        s->replication->sent_bytes += ret;
+        debug(D_STREAM, "REPLICATION %s [send to %s]: Sent %zd bytes", s->host->hostname, s->replication->connected_to, ret);
+        s->replication->last_sent_t = now_monotonic_sec();
+    }
+    else if (ret == -1 && (errno == EAGAIN || errno == EINTR || errno == EWOULDBLOCK))
+        debug(D_STREAM, "REPLICATION %s [send to %s]: unavailable after polling POLLOUT", s->host->hostname,
+              s->replication->connected_to);
     else if (ret == -1) {
         debug(D_STREAM, "REPLICATION: Send failed - closing socket...");
         error("REPLICATION %s [send to %s]: failed to send metrics - closing connection - we have sent %zu bytes on this connection.",  s->host->hostname, s->connected_to, s->sent_bytes_on_this_connection);
@@ -440,7 +487,7 @@ void *replication_sender_thread(void *ptr) {
         
         // If we have data and have seen the TCP window open then try to close it by a transmission.
         //if (outstanding && fds[Socket].revents & POLLOUT)
-        //attempt_to_rsend(s);
+        attempt_to_rsend(s);
         break;
     }
     // Closing thread - clean up any resources allocated here
