@@ -293,6 +293,112 @@ static void replication_attempt_to_connect(struct sender_state *state)
     }
 }
 
+// This is just a placeholder until the gap filling state machine is inserted
+void execute_rcommands(struct sender_state *s) {
+    char *start = s->replication->read_buffer, *end = &s->replication->read_buffer[s->read_len], *newline;
+    *end = 0;
+    while( start<end && (newline=strchr(start, '\n')) ) {
+        *newline = 0;
+        info("REPLICATION %s [send to %s] received command over connection: %s", s->host->hostname, s->replication->connected_to, start);
+        
+        start = newline+1;
+    }
+    if (start<end) {
+        memmove(s->replication->read_buffer, start, end-start);
+        s->replication->read_len = end-start;
+    }
+}
+
+void attempt_rread(struct sender_state *s) {
+int ret;
+#ifdef ENABLE_HTTPS
+    if (s->host->ssl.conn && !s->host->stream_ssl.flags) {
+        ERR_clear_error();
+        int desired = sizeof(s->replication->read_buffer) - s->replication->read_len - 1;
+        ret = SSL_read(s->replication->ssl.conn, s->replication->read_buffer, desired);
+        if (ret > 0 ) {
+            s->replication->read_len += ret;
+            return;
+        }
+        int sslerrno = SSL_get_error(s->replication->ssl.conn, desired);
+        if (sslerrno == SSL_ERROR_WANT_READ || sslerrno == SSL_ERROR_WANT_WRITE)
+            return;
+        u_long err;
+        char buf[256];
+        while ((err = ERR_get_error()) != 0) {
+            ERR_error_string_n(err, buf, sizeof(buf));
+            error("REPLICATION %s [send to %s] ssl error: %s", s->host->hostname, s->replication->connected_to, buf);
+        }
+        error("Restarting connection");
+        replication_sender_thread_close_socket(s->host);
+        return;
+    }
+#endif
+    ret = recv(s->replication->socket, s->replication->read_buffer + s->replication->read_len, sizeof(s->replication->read_buffer) - s->replication->read_len - 1,
+               MSG_DONTWAIT);
+    if (ret>0) {
+        s->replication->read_len += ret;
+        return;
+    }
+    debug(D_STREAM, "Socket was POLLIN, but req %zu bytes gave %d", sizeof(s->replication->read_buffer) - s->replication->read_len - 1, ret);
+    if (ret<0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR))
+        return;
+    if (ret==0)
+        error("REPLICATION %s [send to %s]: connection closed by far end. Restarting connection", s->host->hostname, s->replication->connected_to);
+    else
+        error("REPLICATION %s [send to %s]: error during read (%d). Restarting connection", s->host->hostname, s->replication->connected_to,
+              ret);
+    replication_sender_thread_close_socket(s->host);
+}
+
+// TCP window is open and we have data to transmit.
+void attempt_to_rsend(struct sender_state *s) {
+
+    rrdpush_send_labels(s->host);
+
+#ifdef NETDATA_INTERNAL_CHECKS
+    struct circular_buffer *cb = s->buffer;
+#endif
+
+    netdata_thread_disable_cancelability();
+    netdata_mutex_lock(&s->replication->mutex);
+    char *chunk;
+    size_t outstanding = cbuffer_next_unsafe(s->buffer, &chunk);
+    debug(D_STREAM, "REPLICATION: Sending data. Buffer r=%zu w=%zu s=%zu, next chunk=%zu", cb->read, cb->write, cb->size, outstanding);
+    ssize_t ret;
+#ifdef ENABLE_HTTPS
+    SSL *conn = s->host->ssl.conn ;
+    if(conn && !s->host->ssl.flags) {
+        ret = SSL_write(conn, chunk, outstanding);
+    } else {
+        ret = send(s->replication->socket, chunk, outstanding, MSG_DONTWAIT);
+    }
+#else
+    ret = send(s->replication->socket, chunk, outstanding, MSG_DONTWAIT);
+#endif
+    if (likely(ret > 0)) {
+        cbuffer_remove_unsafe(s->buffer, ret);
+        s->sent_bytes_on_this_connection += ret;
+        s->sent_bytes += ret;
+        debug(D_STREAM, "REPLICATION %s [send to %s]: Sent %zd bytes", s->host->hostname, s->connected_to, ret);
+        s->last_sent_t = now_monotonic_sec();
+    }
+    else if (ret == -1 && (errno == EAGAIN || errno == EINTR || errno == EWOULDBLOCK))
+        debug(D_STREAM, "REPLICATION %s [send to %s]: unavailable after polling POLLOUT", s->host->hostname,
+              s->connected_to);
+    else if (ret == -1) {
+        debug(D_STREAM, "REPLICATION: Send failed - closing socket...");
+        error("REPLICATION %s [send to %s]: failed to send metrics - closing connection - we have sent %zu bytes on this connection.",  s->host->hostname, s->connected_to, s->sent_bytes_on_this_connection);
+        replication_sender_thread_close_socket(s->host);
+    }
+    else {
+        debug(D_STREAM, "REPLICATION: send() returned 0 -> no error but no transmission");
+    }
+
+    netdata_mutex_unlock(&s->replication->mutex);
+    netdata_thread_enable_cancelability();
+}
+
 // Thread creation
 void *replication_sender_thread(void *ptr) {
     struct sender_state *s = (struct sender_state *) ptr;
@@ -324,7 +430,18 @@ void *replication_sender_thread(void *ptr) {
             replication_attempt_to_connect(s);
         // Tmp solution to test the thread cleanup process
         else
-            break;
+
+        // Read as much as possible to fill the buffer, split into full lines for execution.
+        //if (fds[Socket].revents & POLLIN){
+            attempt_rread(s);
+        //}
+
+        execute_rcommands(s);        
+        
+        // If we have data and have seen the TCP window open then try to close it by a transmission.
+        //if (outstanding && fds[Socket].revents & POLLOUT)
+        //attempt_to_rsend(s);
+        break;
     }
     // Closing thread - clean up any resources allocated here
     netdata_thread_cleanup_pop(1);
@@ -852,9 +969,9 @@ size_t replication_parser(struct receiver_state *rpt, struct plugind *cd, FILE *
     parser->plugins_action->clabel_commit_action  = &pluginsd_clabel_commit_action;
     parser->plugins_action->clabel_action    = &pluginsd_clabel_action;
     // Add the actions related with replication here.
-    // parser->plugins_action->gap_action    = &pluginsd_gap_action;
-    // parser->plugins_action->rep_action    = &pluginsd_rep_action;
-    // parser->plugins_action->rdata_action    = &pluginsd_rdata_action;
+    parser->plugins_action->gap_action    = &pluginsd_gap_action;
+    parser->plugins_action->rep_action    = &pluginsd_rep_action;
+    parser->plugins_action->rdata_action    = &pluginsd_rdata_action;
 
     user->parser = parser;
 

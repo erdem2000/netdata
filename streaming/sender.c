@@ -523,6 +523,10 @@ void execute_commands(struct sender_state *s) {
     while( start<end && (newline=strchr(start, '\n')) ) {
         *newline = 0;
         info("STREAM %s [send to %s] received command over connection: %s", s->host->hostname, s->connected_to, start);
+        
+        //TODO If it is REPLICATE then enable replication sender thread, 
+        // otherwise there is not any relation between receiving REPLICATE and triggering the replication sender thread ? 
+        
         start = newline+1;
     }
     if (start<end) {
