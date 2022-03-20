@@ -68,6 +68,7 @@ extern int rrdset2anything_api_v1(
         , struct context_param *context_param_list
         , char *chart_label_key
         , int max_anomaly_rates
+        , uint64_t stats
 );
 
 extern int rrdset2value_api_v1(
