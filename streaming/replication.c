@@ -1151,6 +1151,23 @@ int load_gap(RRDHOST *host)
     return rc;
 }
 
+//delete all gaps from agent metdata db
+int remove_all_gaps(void)
+{
+    int rc;
+    
+    // TBR
+    info("%s: REMOVE in SQLITE all GAPs: ", REPLICATION_MSG);
+    
+    if (unlikely(!db_meta) && default_rrd_memory_mode != RRD_MEMORY_MODE_DBENGINE)
+        return 0;
+    rc = sql_delete_all_gaps();
+    if(!rc)
+        info("%s: Delete GAPs from metadata DB", REPLICATION_MSG);
+
+    return rc;
+}
+
 //delete gap from agent metdata db
 int remove_gap(GAP *a_gap)
 {
@@ -1332,6 +1349,7 @@ void gaps_init(RRDHOST **a_host)
         //Handle this case. Probably shutdown deactivate replication.
     }
     host->gaps_timeline->gap_data = (GAP *)callocz(1, sizeof(GAP));
+
     // load from agent metdata
     if (!load_gap(host)) {
         infoerr("%s: GAPs struct in SQLITE is either empty or failed", REPLICATION_MSG);
@@ -1342,16 +1360,20 @@ void gaps_init(RRDHOST **a_host)
         print_replication_gap(host->gaps_timeline->gap_data);
         return;
     }
+
     info("%s: GAPs STRUCT Initialization/Loading", REPLICATION_MSG);
     return;
 }
 
 void gaps_destroy(RRDHOST **a_host) {
     RRDHOST *host = *a_host;
+    remove_all_gaps();
     // Save gaps before destroy
-    info("%s: DESTROYING GAP for HOST %s", REPLICATION_MSG, host->hostname);
-    if(save_gap(host->gaps_timeline->gap_data))
-        error("%s: Cannot save GAP struct in metadata DB.", REPLICATION_MSG);
+    info("%s: DESTROYING GAPS for HOST %s", REPLICATION_MSG, host->hostname);
+    while(host->gaps_timeline->gap_data = queue_pop(host->gaps_timeline->gaps)){
+        if(save_gap(host->gaps_timeline->gap_data))
+            error("%s: Cannot save GAP struct in metadata DB.", REPLICATION_MSG);
+    }
     queue_free(host->gaps_timeline->gaps);
     gap_destroy(host->gaps_timeline->gap_data);
     freez(host->gaps_timeline);

@@ -50,7 +50,7 @@ extern "C" {
 
 //#define DEBUG (D_WEB_CLIENT_ACCESS|D_LISTENER|D_RRD_STATS)
 //#define DEBUG 0xffffffff
-#define DEBUG (0)
+#define DEBUG (D_REPLICATION)
 
 extern int web_server_is_multithreaded;
 

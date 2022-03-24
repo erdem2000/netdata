@@ -2158,28 +2158,56 @@ int sql_load_host_gap(RRDHOST *host)
 
     // info("%s: Just before the row process of the query:", REPLICATION_MSG);
     // Load here the gaps to the host->gaps_timeline
-    rc = sqlite3_step(res);
-    switch (rc) {
-        case SQLITE_ROW:
-            if (likely(sqlite3_column_bytes(res, 0) == sizeof(uuid_t))) {
-                set_host_gap(host, res);
-                info("%s: Setting host latest gap completed!", REPLICATION_MSG);
-            }
-            break;
-        case SQLITE_DONE:
-            set_host_gap(host, NULL);
-            info("%s: SQLite completed with NO ROWs!", REPLICATION_MSG);
-            break;
-        default:
-            error("%s: SQLite returned unexpected error code!", REPLICATION_MSG);
-            break;
-    }
+    do{
+        rc = sqlite3_step(res);
+        switch (rc) {
+            case SQLITE_ROW:
+                if (likely(sqlite3_column_bytes(res, 0) == sizeof(uuid_t))) {
+                    set_host_gap(host, res);
+                    info("%s: Setting host latest gap completed!", REPLICATION_MSG);
+                }
+                break;
+            case SQLITE_DONE:
+                set_host_gap(host, NULL);
+                info("%s: SQLite completed with NO ROWs!", REPLICATION_MSG);
+                break;
+            default:
+                error("%s: SQLite returned unexpected error code!", REPLICATION_MSG);
+                break;
+        }
+    }while(rc == SQLITE_ROW);
 
 failed:
     if (unlikely(sqlite3_finalize(res) != SQLITE_OK))
         error_report("Failed to finalize the prepared statement when loading all gaps information");
     return rc;
 };
+
+/*
+ * Delete all gaps from the database
+ */
+int sql_delete_all_gaps(void)
+{
+    static __thread sqlite3_stmt *res = NULL;
+    int rc;
+
+    if (unlikely(!res)) {
+        rc = prepare_statement(db_meta, DELETE_ALL_GAPS, &res);
+        if (rc != SQLITE_OK) {
+            error_report("Failed to prepare statement to delete all gaps");
+            return rc;
+        }
+    }
+
+    rc = sqlite3_step(res);
+    if (unlikely(rc != SQLITE_DONE))
+        error_report("Failed to delete gaps, rc = %d", rc);
+
+    rc = sqlite3_reset(res);
+    if (unlikely(rc != SQLITE_OK))
+        error_report("Failed to reset statement when deleting gaps, rc = %d", rc);
+    return rc;
+}
 
 /*
  * Delete a gap from the database
@@ -2236,4 +2264,8 @@ void set_host_gap(RRDHOST *host, sqlite3_stmt *res) {
     host->gaps_timeline->gap_data->t_window.t_first = (time_t) sqlite3_column_int(res, 3); 
     host->gaps_timeline->gap_data->t_window.t_end = (time_t) sqlite3_column_int(res, 4);
     host->gaps_timeline->gap_data->status = strdupz((char *) sqlite3_column_text(res, 5));
+    if (!queue_push(host->gaps_timeline->gaps, (void *)host->gaps_timeline->gap_data)) {
+        error("%s: Cannot insert the loaded GAP in the queue!", REPLICATION_MSG);
+        return;
+    }
 }

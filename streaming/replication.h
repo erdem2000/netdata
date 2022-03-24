@@ -209,6 +209,7 @@ void replication_collect_past_metric_done(REPLICATION_STATE *rep_state);
 void flush_collected_metric_past_data(RRDDIM_PAST_DATA *dim_past_data, REPLICATION_STATE *rep_state);
 void replication_send_clabels(REPLICATION_STATE *rep_state, RRDSET *st);
 int save_gap(GAP *a_gap);
+int remove_all_gaps(void);
 int remove_gap(GAP *a_gap);
 int load_gap(RRDHOST *host);
 
