@@ -674,6 +674,29 @@ void cleanup_after_gap_replication(GAPS *gaps_timeline)
     }
 }
 
+static uint32_t replication_version_to_uncompressed(uint32_t version)
+{
+    switch (version)
+    {
+    case STREAM_VERSION_GAP_FILL_N_COMPRESSION:
+        return STREAM_VERSION_GAP_FILLING;
+        break;
+
+    case STREAM_VERSION_COMPRESSION:
+        return STREAM_VERSION_CLABELS;
+        break;
+
+    default:
+        return version;
+        break;
+    }
+}
+
+static uint32_t negotiating_replication_version(uint32_t host_version, uint32_t incoming_version)
+{
+    return MIN(replication_version_to_uncompressed(host_version), replication_version_to_uncompressed(incoming_version));
+}
+
 int replication_receiver_thread_spawn(struct web_client *w, char *url) {
     info("clients wants to REPLICATE metrics.");
 
@@ -715,7 +738,7 @@ int replication_receiver_thread_spawn(struct web_client *w, char *url) {
         else if(!strcmp(name, "tags"))
             tags = value;
         else if(!strcmp(name, "ver"))
-            stream_version = MIN((uint32_t) strtoul(value, NULL, 0), STREAMING_PROTOCOL_CURRENT_VERSION);
+            stream_version = negotiating_replication_version((uint32_t) strtoul(value, NULL, 0), STREAMING_PROTOCOL_CURRENT_VERSION);
         else {
             // An old Netdata child does not have a compatible streaming protocol, map to something sane.
             if(!strcmp(name, "NETDATA_PROTOCOL_VERSION") && stream_version == UINT_MAX) {
