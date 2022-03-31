@@ -692,8 +692,34 @@ static uint32_t replication_version_to_uncompressed(uint32_t version)
     }
 }
 
+static uint32_t is_version_compressed(uint32_t version) 
+{
+    switch (version)
+    {
+    case STREAM_VERSION_GAP_FILL_N_COMPRESSION:
+        return 1;
+        break;
+
+    case STREAM_VERSION_COMPRESSION:
+        return 1;
+        break;
+    
+    default:
+        return 0;
+        break;
+    }
+}
+
+static uint32_t have_versions_same_compression_method(uint32_t host_version, uint32_t incoming_version){
+    if (is_version_compressed(host_version) == is_version_compressed(incoming_version))
+        return 1;
+    return 0;
+}
+
 static uint32_t negotiating_replication_version(uint32_t host_version, uint32_t incoming_version)
 {
+    if (have_versions_same_compression_method(host_version, incoming_version))
+        return MIN(host_version, incoming_version);
     return MIN(replication_version_to_uncompressed(host_version), replication_version_to_uncompressed(incoming_version));
 }
 
