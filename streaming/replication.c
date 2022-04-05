@@ -716,7 +716,7 @@ int replication_receiver_thread_spawn(struct web_client *w, char *url) {
             tags = value;
         else if(!strcmp(name, "ver")) {
             stream_version = negotiating_stream_version(STREAMING_PROTOCOL_CURRENT_VERSION, (uint32_t) strtoul(value, NULL, 0));
-            info("STREAM EEER %u", stream_version);
+            info("REPLICATION [decided version is %u]", stream_version);
         }
         else {
             // An old Netdata child does not have a compatible streaming protocol, map to something sane.
