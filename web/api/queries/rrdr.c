@@ -98,7 +98,7 @@ inline void rrdr_free(RRDR *r)
     freez(r);
 }
 
-RRDR *rrdr_create(struct rrdset *st, long n, struct context_param *context_param_list)
+RRDR *rrdr_create(struct rrdset *st, long n, int stats_count, struct context_param *context_param_list)
 {
     if (unlikely(!st)) {
         error("NULL value given!");
@@ -124,11 +124,11 @@ RRDR *rrdr_create(struct rrdset *st, long n, struct context_param *context_param
     } else
         rrddim_foreach_read(rd, st) r->d++;
 
-    r->n = n;
+    r->n = n * stats_count;
 
-    r->t = callocz((size_t)n, sizeof(time_t));
-    r->v = mallocz(n * r->d * sizeof(calculated_number));
-    r->o = mallocz(n * r->d * sizeof(RRDR_VALUE_FLAGS));
+    r->t = callocz((size_t)(n * stats_count), sizeof(time_t));
+    r->v = mallocz(n * stats_count * r->d * sizeof(calculated_number));
+    r->o = mallocz(n * stats_count * r->d * sizeof(RRDR_VALUE_FLAGS));
     r->od = mallocz(r->d * sizeof(RRDR_DIMENSION_FLAGS));
 
     // set the hidden flag on hidden dimensions
