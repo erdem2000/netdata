@@ -124,6 +124,7 @@ RRDR *rrdr_create(struct rrdset *st, long n, int stats_count, struct context_par
     } else
         rrddim_foreach_read(rd, st) r->d++;
 
+    stats_count++; // group function (1) + stat functions
     r->n = n * stats_count;
 
     r->t = callocz((size_t)(n * stats_count), sizeof(time_t));

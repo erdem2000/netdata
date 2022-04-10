@@ -1064,8 +1064,8 @@ static RRDR *rrd2rrdr_fixedstep(
     // assign the processor functions
 
     {
-        int i, found = 0;
-        for(i = 0; !found && api_v1_data_groups[i].name ;i++) {
+        int i, j, found = 0;
+        for(i = 0; !found && api_v1_data_groups[i].name; i++) {
             if(api_v1_data_groups[i].value == group_method) {
                 r->internal.grouping_create= api_v1_data_groups[i].create;
                 r->internal.grouping_reset = api_v1_data_groups[i].reset;
@@ -1085,6 +1085,20 @@ static RRDR *rrd2rrdr_fixedstep(
             r->internal.grouping_free  = grouping_free_average;
             r->internal.grouping_add   = grouping_add_average;
             r->internal.grouping_flush = grouping_flush_average;
+        }
+
+        //assign statistic functions
+        j = 0;
+        for(i = 0; api_v1_data_groups[i].name; i++) {
+            if(api_v1_data_groups[i].value && stats){
+                r->stats[j].grouping_create= api_v1_data_groups[i].create;
+                r->stats[j].grouping_reset = api_v1_data_groups[i].reset;
+                r->stats[j].grouping_free  = api_v1_data_groups[i].free;
+                r->stats[j].grouping_add   = api_v1_data_groups[i].add;
+                r->stats[j].grouping_flush = api_v1_data_groups[i].flush;
+                r->stats[j].grouping_data = r->stats[j].grouping_create(r);
+                j++;
+            }
         }
     }
 
@@ -1199,6 +1213,10 @@ static RRDR *rrd2rrdr_fixedstep(
 
     // free all resources used by the grouping method
     r->internal.grouping_free(r);
+
+    for(int i = 0; i < stats_count; i++){
+        r->stats[i].grouping_free(r);
+    }
 
     // when all the dimensions are zero, we should return all of them
     if(unlikely(options & RRDR_OPTION_NONZERO && !dimensions_nonzero)) {
