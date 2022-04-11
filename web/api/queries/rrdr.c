@@ -125,11 +125,11 @@ RRDR *rrdr_create(struct rrdset *st, long n, int stats_count, struct context_par
         rrddim_foreach_read(rd, st) r->d++;
 
     stats_count++; // group function (1) + stat functions
-    r->n = n * stats_count;
+    r->n = n + stats_count;
 
-    r->t = callocz((size_t)(n * stats_count), sizeof(time_t));
-    r->v = mallocz(n * stats_count * r->d * sizeof(calculated_number));
-    r->o = mallocz(n * stats_count * r->d * sizeof(RRDR_VALUE_FLAGS));
+    r->t = callocz((size_t)(n + stats_count), sizeof(time_t));
+    r->v = mallocz((n + stats_count) * r->d * sizeof(calculated_number));
+    r->o = mallocz((n + stats_count) * r->d * sizeof(RRDR_VALUE_FLAGS));
     r->od = mallocz(r->d * sizeof(RRDR_DIMENSION_FLAGS));
 
     // set the hidden flag on hidden dimensions
