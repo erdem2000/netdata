@@ -17,20 +17,20 @@ void *stats_create_max(RRDR *r) {
 
 // resets when switches dimensions
 // so, clear everything to restart
-void stats_reset_max(RRDR *r) {
-    struct stats_max *g = (struct stats_max *)r->internal.grouping_data;
+void stats_reset_max(RRDR *r, int index) {
+    struct stats_max *g = (struct stats_max *)r->stats[index].stat_data;
     g->max = 0;
     g->count = 0;
 }
 
-void stats_free_max(RRDR *r) {
-    freez(r->internal.grouping_data);
+void stats_free_max(RRDR *r, int index) {
+    freez(r->stats[index].stat_data);
     r->internal.grouping_data = NULL;
 }
 
-void stats_add_max(RRDR *r, calculated_number value) {
+void stats_add_max(RRDR *r, calculated_number value, int index) {
     if(!isnan(value)) {
-        struct stats_max *g = (struct stats_max *)r->internal.grouping_data;
+        struct stats_max *g = (struct stats_max *)r->stats[index].stat_data;
 
         if(!g->count || calculated_number_fabs(value) > calculated_number_fabs(g->max)) {
             g->max = value;
@@ -39,8 +39,8 @@ void stats_add_max(RRDR *r, calculated_number value) {
     }
 }
 
-calculated_number stats_flush_max(RRDR *r, RRDR_VALUE_FLAGS *rrdr_value_options_ptr) {
-    struct stats_max *g = (struct stats_max *)r->internal.grouping_data;
+calculated_number stats_flush_max(RRDR *r, RRDR_VALUE_FLAGS *rrdr_value_options_ptr, int index) {
+    struct stats_max *g = (struct stats_max *)r->stats[index].stat_data;
 
     calculated_number value;
 

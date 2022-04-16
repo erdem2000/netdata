@@ -249,7 +249,7 @@ static struct {
 static struct {
     const char *name;
     uint32_t hash;
-    RRDR_GROUPING value;
+    RRDR_STATS value;
 
     // One time initialization for the module.
     // This is called once, when netdata starts.
@@ -262,14 +262,14 @@ static struct {
     // Cleanup collected values, but don't destroy the structures.
     // This is called when the query engine switches dimensions,
     // as part of the same query (so same chart, switching metric).
-    void (*reset)(struct rrdresult *r);
+    void (*reset)(struct rrdresult *r, int index);
 
     // Free all resources allocated for the query.
-    void (*free)(struct rrdresult *r);
+    void (*free)(struct rrdresult *r, int index);
 
     // Add a single value into the calculation.
     // The module may decide to cache it, or use it in the fly.
-    void (*add)(struct rrdresult *r, calculated_number value);
+    void (*add)(struct rrdresult *r, calculated_number value, int index);
 
     // Generate a single result for the values added so far.
     // More values and points may be requested later.
@@ -277,7 +277,7 @@ static struct {
     // when flushing it (so for a few modules it may be better to
     // continue after a flush as if nothing changed, for others a
     // cleanup of the internal structures may be required).
-    calculated_number (*flush)(struct rrdresult *r, RRDR_VALUE_FLAGS *rrdr_value_options_ptr);
+    calculated_number (*flush)(struct rrdresult *r, RRDR_VALUE_FLAGS *rrdr_value_options_ptr, int index);
 } api_v1_data_stats[] = {
         {.name = "max_s",
                 .hash  = 0,
@@ -295,11 +295,11 @@ static struct {
                 .hash  = 0,
                 .value = RRDR_GROUPING_UNDEFINED,
                 .init = NULL,
-                .create= stats_create_max,
-                .reset = stats_reset_max,
-                .free  = stats_free_max,
-                .add   = stats_add_max,
-                .flush = stats_flush_max
+                .create= NULL,
+                .reset = NULL,
+                .free  = NULL,
+                .add   = NULL,
+                .flush = NULL
         }
 };
 
@@ -692,8 +692,8 @@ static inline void do_dimension_fixedstep(
             // add this value for grouping
             r->internal.grouping_add(r, value);
             for(int i = 0; i < stats_count; i++){
-                r->stats[i].grouping_add(r, value);
-                info("Stats value add: %Lf", value);
+                r->stats[i].stat_add(r, value, i);
+                info("Stats value add: %Lf to the index of %d", value, i);
             }
             values_in_group++;
             db_points_read++;
@@ -740,7 +740,7 @@ static inline void do_dimension_fixedstep(
                         *rrdr_value_options_ptr = group_value_flags;
 
                         // store the value
-                        calculated_number value = r->stats[i].grouping_flush(r, rrdr_value_options_ptr);
+                        calculated_number value = r->stats[i].stat_flush(r, rrdr_value_options_ptr, i);
                         r->v[rrdr_line * r->d + dim_id_in_rrdr] = value;
                     }
                 }
@@ -1171,12 +1171,12 @@ static RRDR *rrd2rrdr_fixedstep(
         j = 0;
         for(i = 0; api_v1_data_stats[i].name; i++) {
             if(api_v1_data_stats[i].value & stats_temp){
-                r->stats[j].grouping_create= api_v1_data_stats[i].create;
-                r->stats[j].grouping_reset = api_v1_data_stats[i].reset;
-                r->stats[j].grouping_free  = api_v1_data_stats[i].free;
-                r->stats[j].grouping_add   = api_v1_data_stats[i].add;
-                r->stats[j].grouping_flush = api_v1_data_stats[i].flush;
-                r->stats[j].grouping_data = r->stats[j].grouping_create(r);
+                r->stats[j].stat_create= api_v1_data_stats[i].create;
+                r->stats[j].stat_reset = api_v1_data_stats[i].reset;
+                r->stats[j].stat_free  = api_v1_data_stats[i].free;
+                r->stats[j].stat_add   = api_v1_data_stats[i].add;
+                r->stats[j].stat_flush = api_v1_data_stats[i].flush;
+                r->stats[j].stat_data = r->stats[j].stat_create(r);
                 stats_temp &= ~api_v1_data_stats[i].value;
                 j++;
             }
@@ -1216,6 +1216,10 @@ static RRDR *rrd2rrdr_fixedstep(
 
         // reset the grouping for the new dimension
         r->internal.grouping_reset(r);
+        for (int i = 0; i < stats_count; i++)
+        {
+            r->stats[i].stat_reset(r, i);
+        }
 
         do_dimension_fixedstep(
                 r
@@ -1297,7 +1301,7 @@ static RRDR *rrd2rrdr_fixedstep(
     r->internal.grouping_free(r);
 
     for(int i = 0; i < stats_count; i++){
-        r->stats[i].grouping_free(r);
+        r->stats[i].stat_free(r, i);
     }
 
     // when all the dimensions are zero, we should return all of them
