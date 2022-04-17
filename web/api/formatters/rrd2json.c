@@ -399,7 +399,8 @@ int rrdset2anything_api_v1(
             rrdr_json_wrapper_begin(r, wb, format, options, 0, context_param_list, chart_label_key);
 
         rrdr2json(r, wb, options, 0, context_param_list, 0);
-        rrdr2json(r, wb, options, 0, context_param_list, 1);
+        if(r->stats_count)
+            rrdr2json(r, wb, options, 0, context_param_list, 1);
 
         if(options & RRDR_OPTION_JSON_WRAP)
             rrdr_json_wrapper_end(r, wb, format, options, 0);

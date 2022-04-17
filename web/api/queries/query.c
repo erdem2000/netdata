@@ -1196,6 +1196,7 @@ static RRDR *rrd2rrdr_fixedstep(
                 r->stats[j].stat_add   = api_v1_data_stats[i].add;
                 r->stats[j].stat_flush = api_v1_data_stats[i].flush;
                 r->stats[j].stat_data = r->stats[j].stat_create(r);
+                strcpy(r->stats[j].name, api_v1_data_stats[i].name);
                 stats_temp &= ~api_v1_data_stats[i].value;
                 j++;
             }

@@ -93,10 +93,10 @@ void rrdr2json(RRDR *r, BUFFER *wb, RRDR_OPTIONS options, int datatable,  struct
             strcpy(post_line, "}");
         else
             strcpy(post_line, "]");
-        snprintfz(data_begin, 100, "],\n    %s%s%s:\n [\n", kq, data, kq);
-        strcpy(finish,             "\n  ]\n}");
+        snprintfz(data_begin, 100, "],\n    %s%s%s:\n   [\n", kq, data, kq);
+        strcpy(finish,             "\n   ]\n}");
         if(!is_stats){
-            buffer_sprintf(wb, "{\n %slabels%s: [", kq, kq);
+            buffer_sprintf(wb, "{\n    %slabels%s: [", kq, kq);
             buffer_sprintf(wb, "%stime%s", sq, sq);
         }
     }
@@ -156,7 +156,7 @@ void rrdr2json(RRDR *r, BUFFER *wb, RRDR_OPTIONS options, int datatable,  struct
 
     // for each line in the array
     calculated_number total = 1;
-    for(i = start; i != end; i += step) {
+    for(int stat_order = 0, i = start; i != end; i += step, stat_order++) {
         calculated_number *cn = &r->v[ i * r->d ];
         RRDR_VALUE_FLAGS *co = &r->o[ i * r->d ];
 
@@ -203,10 +203,13 @@ void rrdr2json(RRDR *r, BUFFER *wb, RRDR_OPTIONS options, int datatable,  struct
 
             if( options & RRDR_OPTION_OBJECTSROWS )
                 buffer_sprintf(wb, "%stime%s: ", kq, kq);
-
-            buffer_rrd_value(wb, (calculated_number)r->t[i]);
-            // in ms
-            if(options & RRDR_OPTION_MILLISECONDS) buffer_strcat(wb, "000");
+            if(!is_stats) {
+                buffer_rrd_value(wb, (calculated_number)r->t[i]);
+                // in ms
+                if(options & RRDR_OPTION_MILLISECONDS) buffer_strcat(wb, "000");
+            } else {
+                buffer_strcat(wb, r->stats[stat_order].name);
+            }
 
             buffer_strcat(wb, post_date);
         }
@@ -268,7 +271,7 @@ void rrdr2json(RRDR *r, BUFFER *wb, RRDR_OPTIONS options, int datatable,  struct
         }
             buffer_strcat(wb, post_line);
     }
-    if(is_stats)
-        buffer_strcat(wb, finish);
+    if(is_stats || stats_count == 0)
+        buffer_strcat(wb, finish); 
     //info("RRD2JSON(): %s: END", r->st->id);
 }

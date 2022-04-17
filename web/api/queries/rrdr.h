@@ -77,6 +77,7 @@ typedef struct stat_s{
     void (*stat_add)(struct rrdresult *r, calculated_number value, int index);
     calculated_number (*stat_flush)(struct rrdresult *r, RRDR_VALUE_FLAGS *rrdr_value_options_ptr, int index);
     void *stat_data;
+    char name[100];
 } stat_t;
 typedef struct rrdresult {
     struct rrdset *st;         // the chart this result refers to
