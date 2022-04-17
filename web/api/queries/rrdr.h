@@ -106,6 +106,7 @@ typedef struct rrdresult {
     uint8_t st_needs_lock;  // if ST should be locked
 
     internal_t internal;
+    int stats_count;
     stat_t stats[MAX_STAT_FUNCTION_COUNT]; // Max 64 is statistic function,
                                            // it can be handled with dynamic memory allocation
 } RRDR;

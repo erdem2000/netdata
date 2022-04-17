@@ -279,6 +279,16 @@ static struct {
     // cleanup of the internal structures may be required).
     calculated_number (*flush)(struct rrdresult *r, RRDR_VALUE_FLAGS *rrdr_value_options_ptr, int index);
 } api_v1_data_stats[] = {
+        {.name = "min_s",
+                .hash  = 0,
+                .value = RRDR_STATS_MIN,
+                .init  = NULL,
+                .create= stats_create_max,
+                .reset = stats_reset_max,
+                .free  = stats_free_max,
+                .add   = stats_add_max,
+                .flush = stats_flush_max
+        },
         {.name = "max_s",
                 .hash  = 0,
                 .value = RRDR_STATS_MAX,
@@ -289,7 +299,16 @@ static struct {
                 .add   = stats_add_max,
                 .flush = stats_flush_max
         },
-
+        {.name = "zscore_s",
+                .hash  = 0,
+                .value = RRDR_STATS_ZSCORE,
+                .init  = NULL,
+                .create= stats_create_max,
+                .reset = stats_reset_max,
+                .free  = stats_free_max,
+                .add   = stats_add_max,
+                .flush = stats_flush_max
+        },
         // terminator
         {.name = NULL,
                 .hash  = 0,
