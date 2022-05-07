@@ -6,6 +6,8 @@
 #define REP_ACK_CMD "REP ACK"
 #define REPLICATION_RX_CMD_Q_MAX_SIZE (64)
 #define REPLICATION_GAP_TIME_MARGIN 0
+#define REPLICATION_STREAMING_WAIT_STEP 2
+#define REPLICATION_STREAMING_WAIT_STEP_COUNT 40
 
 typedef struct gap GAP;
 typedef struct time_window TIME_WINDOW;
@@ -32,7 +34,7 @@ struct replication_state {
     volatile unsigned int sender_thread_join; // Following the normal shutdown seq need to verify the replication sender thread shutdown.
     //state variables
     int excom;
-    int timeout, default_port;   
+    int timeout, default_port;
     // connection variables
     int socket;
     unsigned int connected;
@@ -53,7 +55,7 @@ struct replication_state {
     char read_buffer[512];
     int read_len;
     uint32_t stream_version;
-    //rx thread variables    
+    //rx thread variables
     time_t last_msg_t;
     char *client_ip;
     char *client_port;
